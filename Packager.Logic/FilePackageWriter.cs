@@ -7,10 +7,11 @@ using System.Threading.Tasks;
 
 namespace Packager.Logic
 {
+    /// <summary>
+    /// This class using for writing to the package file
+    /// </summary>
     class FilePackageWriter : IDisposable
     {
-        private const int fileNameBlockSize = 128;
-
         private int filesCount;
         private long filesDescriptionBlockOffset;
         private long dataBlockOffset;
@@ -19,6 +20,10 @@ namespace Packager.Logic
 
         FileStream destination;
 
+        /// <summary>
+        /// Create writer instance for specified File Stream
+        /// </summary>
+        /// <param name="destination">File Stream for writing data</param>
         public FilePackageWriter(FileStream destination)
         {
             if (destination == null)
@@ -27,6 +32,10 @@ namespace Packager.Logic
             this.destination = destination;
         }
 
+        /// <summary>
+        /// Writes in first 4 bytes in file count of files in the package 
+        /// </summary>
+        /// <param name="filesCount">Number of files</param>
         public void WriteFilesCount(int filesCount)
         {
             if (filesCount < 0)
@@ -38,13 +47,27 @@ namespace Packager.Logic
             destination.Write(result, 0, result.Length);
 
             this.filesCount = filesCount;
-            filesDescriptionBlockOffset = 4;
-            dataBlockOffset = filesCount * (fileNameBlockSize + 8) + 4;
-            currentFileDescriptionPosition = filesDescriptionBlockOffset;
+            InitPositions(filesCount);
+        }
+
+        private void InitPositions(int filesCount)
+        {
+            filesDescriptionBlockOffset = FilePackageConstants.FilesCountBlockSize;
+            currentFileDescriptionPosition = FilePackageConstants.FilesCountBlockSize;
+            SetDataBlockOffset(filesCount);
             currentDataBlockPosition = dataBlockOffset;
         }
-         
 
+        private void SetDataBlockOffset(int filesCount)
+        {
+            dataBlockOffset = filesCount * FilePackageConstants.FileDescriptionBlockSize + FilePackageConstants.FilesCountBlockSize;
+        }
+
+        /// <summary>
+        /// Writes to the stream information and body of the file 
+        /// </summary>
+        /// <param name="filename">A name that will be stored in the package</param>
+        /// <param name="file">A file that will be stored in the package</param>
         public void WriteFile(string filename, FileStream file)
         {
             if (string.IsNullOrEmpty(filename))
@@ -57,6 +80,11 @@ namespace Packager.Logic
             WriteFileData(file);
         }
 
+        /// <summary>
+        /// Appends file to existing package
+        /// </summary>
+        /// <param name="filename">A name that will be stored in the package</param>
+        /// <param name="file">A file that will be stored in the package</param>
         public void AppendFile(string filename, FileStream file)
         {
             if (string.IsNullOrEmpty(filename))
@@ -72,31 +100,57 @@ namespace Packager.Logic
             WriteFileData(file);
         }
 
+        /// <summary>
+        /// It moves a block of data to make space for service information
+        /// </summary>
         private void MoveDataBlock()
         {
-            destination.Position = dataBlockOffset - (fileNameBlockSize + 8);
+            destination.Position = dataBlockOffset - FilePackageConstants.FileDescriptionBlockSize;
             byte[] buffer = new byte[destination.Length - destination.Position];
             destination.Read(buffer, 0, buffer.Length);
             destination.Position = dataBlockOffset;
             destination.Write(buffer, 0, buffer.Length);
         }
 
+        /// <summary>
+        /// It changes offset values for existing files in the package
+        /// </summary>
         private void MoveReferences()
         {
-            destination.Position = filesDescriptionBlockOffset + fileNameBlockSize;
-            byte[] buffer = new byte[8];
+            destination.Position = filesDescriptionBlockOffset;
             for (int i = 0; i < filesCount; i++)
             {
-                destination.Read(buffer, 0, buffer.Length);
-                long value = LongFromBytes(buffer);
-                value += (fileNameBlockSize + 8);
-                destination.Position -= 8;
-                buffer = ToBytes(value);
-                destination.Write(buffer, 0, buffer.Length);
-                destination.Position += fileNameBlockSize; 
+                MoveReference();
             }
         }
 
+        private void MoveReference()
+        {
+            destination.Position += FilePackageConstants.FileNameBlockSize;
+            long value = ReadOffsetValue();
+            value += FilePackageConstants.FileDescriptionBlockSize;
+            destination.Position -= FilePackageConstants.FileOffsetBlockSize;
+            WriteOffsetValue(value);            
+        }
+
+        private void WriteOffsetValue(long value)
+        {
+            byte[] buffer = ToBytes(value);
+            destination.Write(buffer, 0, buffer.Length);
+        }
+
+        private long ReadOffsetValue()
+        {
+            byte[] buffer = new byte[FilePackageConstants.FileOffsetBlockSize];
+            destination.Read(buffer, 0, buffer.Length);
+            long value = LongFromBytes(buffer);
+            return value;
+        }
+
+        /// <summary>
+        /// It is used for sequential recording information about files
+        /// </summary>
+        /// <param name="filename">The file name that will be added</param>
         private void WriteNextFileDescription(string filename)
         {
             destination.Position = currentFileDescriptionPosition;
@@ -106,9 +160,13 @@ namespace Packager.Logic
             currentFileDescriptionPosition = destination.Position;
         }
 
+        /// <summary>
+        /// It is used for appending information about files
+        /// </summary>
+        /// <param name="filename">The file name that will be added</param>
         private void AppendFileDescription(string filename)
         {
-            destination.Position = dataBlockOffset - (fileNameBlockSize + 8);
+            destination.Position = dataBlockOffset - FilePackageConstants.FileDescriptionBlockSize;
             currentDataBlockPosition = destination.Length;
 
             WriteFileDescription(filename);
@@ -118,12 +176,15 @@ namespace Packager.Logic
 
         private void WriteFileDescription(string filename)
         {
-            byte[] filenameBytes = new byte[fileNameBlockSize];
+            WriteFileName(filename);
+            WriteOffsetValue(currentDataBlockPosition);
+        }
+
+        private void WriteFileName(string filename)
+        {
+            byte[] filenameBytes = new byte[FilePackageConstants.FileNameBlockSize];
             Encoding.Unicode.GetBytes(filename, 0, filename.Length, filenameBytes, 0);
             destination.Write(filenameBytes, 0, filenameBytes.Length);
-
-            byte[] lengthBytes = ToBytes(currentDataBlockPosition);
-            destination.Write(lengthBytes, 0, lengthBytes.Length);
         }
 
         private void WriteFileData(FileStream file)

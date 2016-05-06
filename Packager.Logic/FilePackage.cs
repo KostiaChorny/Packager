@@ -48,15 +48,23 @@ namespace Packager.Logic
         {
             if (String.IsNullOrEmpty(filename))
                 throw new ArgumentException("Filename is null or empty", "filename");
-
-            PackagedFileInfo file = files.SingleOrDefault(f => f.FileName == filename);
+            PackagedFileInfo file = FindFileInPackage(filename);
             if (file == null)
                 throw new FileNotFoundException("File not found", filename);
+            CopyDataToFileStream(file, destFile);
+        }
 
+        private void CopyDataToFileStream(PackagedFileInfo file, FileStream destFile)
+        {
             target.Position = file.Offset;
             byte[] fileBytes = new byte[file.Length];
             target.Read(fileBytes, 0, fileBytes.Length);
             destFile.Write(fileBytes, 0, fileBytes.Length);
+        }
+
+        private PackagedFileInfo FindFileInPackage(string filename)
+        {
+            return files.SingleOrDefault(f => f.FileName == filename);
         }
 
         /// <summary>
@@ -66,9 +74,6 @@ namespace Packager.Logic
         /// <param name="destFileName">Name of destination file</param>
         public void GetFile(string filename, string destFileName)
         {
-            if (!File.Exists(destFileName))
-                throw new FileNotFoundException("File not found", destFileName);
-
             using (FileStream file = new FileStream(destFileName, FileMode.OpenOrCreate))
             {
                 GetFile(filename, file);
@@ -90,7 +95,8 @@ namespace Packager.Logic
                 writer.WriteFilesCount(files.Count + 1);
                 writer.AppendFile(Path.GetFileName(path), file);
             }
-            Init();            
+            // Update state after changing schema
+            Init();
         }
 
         public void Dispose()
